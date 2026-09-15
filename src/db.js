@@ -99,11 +99,18 @@ async function ensureSeedAppointments() {
     { patient: patients[4], doctor: dentists[4], especialidad: 'Rehabilitación', fecha: '2026-09-22', hora: '14:00', motivo: 'Revisión de restauraciones', estado: 'Confirmada' }
   ];
 
+  const existing = await all('SELECT paciente_id, odontologo, fecha, hora FROM citas');
+  const usedKeys = new Set(existing.map((c) => `${c.paciente_id}|${c.odontologo}|${c.fecha}|${c.hora}`));
+
   for (const item of sampleAppointments) {
+    const key = `${item.patient.id}|${item.doctor.name}|${item.fecha}|${item.hora}`;
+    if (usedKeys.has(key)) {
+      continue;
+    }
+
     await db.query(
       `INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         item.patient.id,
         item.patient.name,
@@ -115,6 +122,8 @@ async function ensureSeedAppointments() {
         item.estado
       ]
     );
+
+    usedKeys.add(key);
   }
 }
 

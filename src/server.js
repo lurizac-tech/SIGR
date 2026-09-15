@@ -87,7 +87,7 @@ function parseCita(row) {
 
 async function obtenerDisponibilidad(odontologo, fecha) {
   await dbReady;
-  const rows = await all('SELECT hora FROM citas WHERE odontologo = ? AND fecha = ?', [odontologo, fecha]);
+  const rows = await all('SELECT hora FROM citas WHERE odontologo = $1 AND fecha = $2', [odontologo, fecha]);
   const ocupadas = rows.map((row) => row.hora);
   return horariosDisponibles.filter((hora) => !ocupadas.includes(hora));
 }
@@ -178,7 +178,7 @@ app.post('/api/auth/register', async (req, res) => {
     role: 'user'
   };
 
-  await run('INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)', [name, email, password, 'user']);
+  await run('INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4)', [name, email, password, 'user']);
   users = await all('SELECT * FROM users');
   const token = generateToken(newUser);
 
@@ -281,7 +281,7 @@ app.post('/api/historial', verificarJWT, async (req, res) => {
   const doctorName = req.user.name || 'Odontólogo';
   const patientRecord = users.find((user) => user.name === paciente || user.email === paciente);
   const result = await run(
-    'INSERT INTO historial (paciente, paciente_id, odontologo, odontologo_id, diagnostico, observaciones) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO historial (paciente, paciente_id, odontologo, odontologo_id, diagnostico, observaciones) VALUES ($1, $2, $3, $4, $5, $6)',
     [paciente, patientRecord ? patientRecord.id : null, doctorName, req.user.id, diagnostico, observaciones]
   );
 
@@ -472,13 +472,13 @@ app.post('/api/citas', verificarJWT, async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Faltan datos de la cita.' });
   }
 
-  const conflicto = await get('SELECT id FROM citas WHERE odontologo = ? AND fecha = ? AND hora = ?', [odontologo, fecha, hora]);
+  const conflicto = await get('SELECT id FROM citas WHERE odontologo = $1 AND fecha = $2 AND hora = $3', [odontologo, fecha, hora]);
   if (conflicto) {
     return res.status(409).json({ ok: false, message: 'Conflicto de horario: el odontólogo ya tiene esa hora reservada.' });
   }
 
   const result = await run(
-    'INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
     [usuario.id, usuario.name, odontologo, especialidad || 'Consulta general', fecha, hora, motivo || 'Consulta general', 'Confirmada']
   );
 
@@ -517,7 +517,7 @@ app.patch('/api/citas/:id', verificarJWT, async (req, res) => {
   const { id } = req.params;
   const { fecha, hora, motivo, estado } = req.body;
 
-  const cita = await get('SELECT * FROM citas WHERE id = ?', [id]);
+  const cita = await get('SELECT * FROM citas WHERE id = $1', [id]);
   if (!cita) {
     return res.status(404).json({ ok: false, message: 'Cita no encontrada.' });
   }
@@ -532,11 +532,11 @@ app.patch('/api/citas/:id', verificarJWT, async (req, res) => {
   const nextEstado = estado || cita.estado;
 
   await run(
-    'UPDATE citas SET fecha = ?, hora = ?, motivo = ?, estado = ? WHERE id = ?',
+    'UPDATE citas SET fecha = $1, hora = $2, motivo = $3, estado = $4 WHERE id = $5',
     [nextFecha, nextHora, nextMotivo, nextEstado, id]
   );
 
-  const updated = await get('SELECT * FROM citas WHERE id = ?', [id]);
+  const updated = await get('SELECT * FROM citas WHERE id = $1', [id]);
   citas = await all('SELECT * FROM citas ORDER BY fecha ASC, hora ASC');
 
   return res.json({ ok: true, message: 'Cita actualizada correctamente.', cita: parseCita(updated) });
@@ -546,7 +546,7 @@ app.delete('/api/citas/:id', verificarJWT, async (req, res) => {
   await dbReady;
   const { id } = req.params;
 
-  const cita = await get('SELECT * FROM citas WHERE id = ?', [id]);
+  const cita = await get('SELECT * FROM citas WHERE id = $1', [id]);
   if (!cita) {
     return res.status(404).json({ ok: false, message: 'Cita no encontrada.' });
   }
@@ -555,7 +555,7 @@ app.delete('/api/citas/:id', verificarJWT, async (req, res) => {
     return res.status(403).json({ ok: false, message: 'No tienes permisos para cancelar esta cita.' });
   }
 
-  await run('UPDATE citas SET estado = ? WHERE id = ?', ['Cancelada', id]);
+  await run('UPDATE citas SET estado = $1 WHERE id = $2', ['Cancelada', id]);
   citas = await all('SELECT * FROM citas ORDER BY fecha ASC, hora ASC');
 
   return res.json({ ok: true, message: 'Cita cancelada correctamente.' });

@@ -66,20 +66,43 @@ async function initDatabase() {
     )
   `);
 
-  const count = await get('SELECT COUNT(*) AS total FROM users');
-  if (count.total === 0) {
-    await run(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-      ['Administrador ApexFlow', 'admin@apexflow.com', 'admin123', 'admin']
-    );
-    await run(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-      ['María López', 'paciente@apexflow.com', 'paciente123', 'patient']
-    );
+  await run(`
+    CREATE TABLE IF NOT EXISTS historial (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      paciente TEXT NOT NULL,
+      paciente_id INTEGER,
+      odontologo TEXT NOT NULL,
+      odontologo_id INTEGER NOT NULL,
+      diagnostico TEXT NOT NULL,
+      observaciones TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  const defaultUsers = [
+    ['Administrador ApexFlow', 'admin@apexflow.com', 'admin123', 'admin'],
+    ['Administrador de Operaciones', 'admin2@apexflow.com', 'admin456', 'admin'],
+    ['María López', 'paciente@apexflow.com', 'paciente123', 'patient'],
+    ['Carlos Ruiz', 'paciente2@apexflow.com', 'paciente456', 'patient'],
+    ['Lucía García', 'paciente3@apexflow.com', 'paciente789', 'patient'],
+    ['Dra. Ana Gómez', 'dentista@apexflow.com', 'dentista123', 'dentist'],
+    ['Dr. Javier Torres', 'dentista2@apexflow.com', 'dentista456', 'dentist'],
+    ['Dra. Sofía Ramírez', 'dentista3@apexflow.com', 'dentista789', 'dentist']
+  ];
+
+  for (const [name, email, password, role] of defaultUsers) {
+    const user = await get('SELECT id FROM users WHERE email = ?', [email]);
+    if (!user) {
+      await run(
+        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+        [name, email, password, role]
+      );
+    }
   }
 
   const citaCount = await get('SELECT COUNT(*) AS total FROM citas');
   if (citaCount.total === 0) {
+    const dentista = await get('SELECT id FROM users WHERE email = ?', ['dentista@apexflow.com']);
     await run(
       'INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [2, 'María López', 'Dra. Ana Gómez', 'Endodoncia', '2026-09-12', '09:30', 'Revisión general', 'Confirmada']

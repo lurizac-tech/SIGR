@@ -3,13 +3,16 @@ const TOKEN_KEY = 'apexflow_token';
 
 const loginCard = document.getElementById('loginCard');
 const workspace = document.getElementById('workspace');
-const quickButtons = document.querySelectorAll('.quick-btn');
 const loginForm = document.getElementById('loginForm');
 const tabButtons = document.querySelectorAll('.tab-btn');
 const tabPanels = document.querySelectorAll('.tab-panel');
 const statusBadge = document.querySelector('.status-badge');
+const logoutBtn = document.getElementById('logoutBtn');
 const citasTableBody = document.querySelector('#citas-panel tbody');
 const adminTableBody = document.querySelector('#admin-panel tbody');
+const historialTableBody = document.querySelector('#historialTableBody');
+const historialSummary = document.getElementById('historialSummary');
+const jwtTokenPreview = document.getElementById('jwtTokenPreview');
 
 let currentUser = null;
 
@@ -36,6 +39,15 @@ async function apiRequest(endpoint, options = {}) {
 
   const payload = await response.json().catch(() => ({}));
 
+  if (response.status === 401 || response.status === 403) {
+    if (!endpoint.startsWith('/api/auth/')) {
+      clearSessionState();
+      showLoginScreen();
+      showAlert('error', 'La sesión expiró. Inicia sesión nuevamente.');
+    }
+    throw new Error(payload.message || 'Token inválido o expirado.');
+  }
+
   if (!response.ok) {
     throw new Error(payload.message || 'Error en la solicitud');
   }
@@ -43,24 +55,60 @@ async function apiRequest(endpoint, options = {}) {
   return payload;
 }
 
+function clearSessionState() {
+  localStorage.removeItem(TOKEN_KEY);
+  currentUser = null;
+  updateJwtPreview();
+  updateRoleTheme('guest');
+
+  if (statusBadge) {
+    statusBadge.innerHTML = '<span class="status-dot"></span> Inicia sesión';
+  }
+
+  if (logoutBtn) logoutBtn.classList.add('hidden');
+}
+
+function showLoginScreen() {
+  clearSessionState();
+
+  if (loginCard) loginCard.style.display = 'grid';
+  if (workspace) workspace.classList.remove('active');
+}
+
 function showAlert(type, message) {
   const isSuccess = type === 'success';
   const toast = document.createElement('div');
+  const label = isSuccess ? 'Éxito' : 'Error';
 
-  toast.style.position = 'fixed';
-  toast.style.right = '20px';
-  toast.style.bottom = '20px';
-  toast.style.zIndex = '99999';
-  toast.style.borderRadius = '12px';
-  toast.style.padding = '12px 16px';
-  toast.style.fontWeight = '700';
-  toast.style.color = '#fff';
-  toast.style.background = isSuccess ? '#19a974' : '#ef4444';
-  toast.style.boxShadow = '0 12px 25px rgba(0,0,0,0.14)';
-  toast.textContent = `${isSuccess ? 'Éxito' : 'Error'}: ${message}`;
+  toast.className = 'toast-message';
+  toast.dataset.type = type;
+  toast.innerHTML = `
+    <span class="toast-icon">${isSuccess ? '✓' : '!'}</span>
+    <div>
+      <strong>${label}</strong>
+      <span>${message}</span>
+    </div>
+  `;
 
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2800);
+
+  requestAnimationFrame(() => {
+    toast.classList.add('visible');
+  });
+
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 220);
+  }, 2600);
+}
+
+function updateJwtPreview(token = '') {
+  if (!jwtTokenPreview) return;
+  jwtTokenPreview.textContent = token ? `${token.slice(0, 20)}...` : 'sin token activo';
+}
+
+function updateRoleTheme(role = 'guest') {
+  document.body.dataset.role = role;
 }
 
 function renderCitas(citas = []) {
@@ -111,6 +159,93 @@ function renderAdminCitas(citas = []) {
     `;
     adminTableBody.appendChild(row);
   });
+}
+
+function renderQueue(items = []) {
+  const queueList = document.getElementById('queueList');
+  if (!queueList) return;
+
+  if (!items.length) {
+    queueList.innerHTML = '<li class="notification-empty">Sin mensajes en cola.</li>';
+    return;
+  }
+
+  queueList.innerHTML = items.map((item) => `
+    <li class="notification-item ${item.status === 'sent' ? 'is-sent' : 'is-queued'}">
+      <div class="notification-header">
+        <span class="notification-status">${item.status === 'sent' ? '✓ Enviado' : '⏳ En cola'}</span>
+        <span class="notification-type">${item.type === 'email' ? 'Correo' : 'Sistema'}</span>
+      </div>
+      <strong>${item.title}</strong>
+      <div class="notification-body">${item.message}</div>
+      ${item.recipient ? `<small>${item.recipient}</small>` : ''}
+    </li>
+  `).join('');
+}
+
+function renderHistorialNotas(notes = []) {
+  if (!historialTableBody) return;
+
+  if (!notes.length) {
+    historialTableBody.innerHTML = '<tr><td colspan="5">Sin registros clínicos disponibles.</td></tr>';
+    return;
+  }
+
+  historialTableBody.innerHTML = notes.map((note) => `
+    <tr>
+      <td>${new Date(note.createdAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+      <td>${note.paciente}</td>
+      <td>${note.diagnostico}</td>
+      <td>${note.odontologo}</td>
+      <td>${note.observaciones}</td>
+    </tr>
+  `).join('');
+}
+
+function renderHistorialSummary(notes = []) {
+  if (!historialSummary) return;
+
+  const total = notes.length;
+  const latest = notes[0]?.createdAt ? new Date(notes[0].createdAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin registros';
+  const paciente = notes[0]?.paciente || '—';
+
+  historialSummary.innerHTML = `
+    <div class="summary-card accent">
+      <span class="summary-label">Notas registradas</span>
+      <strong>${total}</strong>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">Última revisión</span>
+      <strong>${latest}</strong>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">Paciente activo</span>
+      <strong>${paciente}</strong>
+    </div>
+  `;
+}
+
+async function cargarHistorial() {
+  try {
+    const data = await apiRequest('/api/historial');
+    const notes = data.notes || [];
+    renderHistorialNotas(notes);
+    renderHistorialSummary(notes);
+  } catch (error) {
+    console.error(error);
+    renderHistorialNotas([]);
+    renderHistorialSummary([]);
+  }
+}
+
+async function cargarQueue() {
+  try {
+    const data = await apiRequest('/api/queue');
+    renderQueue(data.queue || []);
+  } catch (error) {
+    console.error(error);
+    renderQueue([]);
+  }
 }
 
 async function cargarCitas() {
@@ -173,6 +308,8 @@ function applyRolePermissions(role) {
   const historialTab = document.querySelector('.tab-btn[data-tab="historial"]');
   const historialPanel = document.getElementById('historial-panel');
   const adminTab = document.querySelector('.tab-btn[data-tab="admin"]');
+  const agendaTab = document.querySelector('.tab-btn[data-tab="agenda"]');
+  const citasTab = document.querySelector('.tab-btn[data-tab="citas"]');
 
   if (!historialTab) return;
 
@@ -184,17 +321,31 @@ function applyRolePermissions(role) {
 
     const activeTab = document.querySelector('.tab-btn.active');
     if (activeTab && (activeTab.dataset.tab === 'historial' || activeTab.dataset.tab === 'admin')) {
-      const agendaTab = document.querySelector('.tab-btn[data-tab="agenda"]');
+      if (agendaTab) agendaTab.click();
+    }
+  } else if (role === 'dentist') {
+    historialTab.style.display = 'inline-flex';
+    if (adminTab) adminTab.style.display = 'none';
+    if (agendaTab) agendaTab.textContent = 'Mi Agenda';
+    if (citasTab) citasTab.textContent = 'Agenda de Pacientes';
+
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (activeTab && activeTab.dataset.tab === 'admin') {
       if (agendaTab) agendaTab.click();
     }
   } else {
     historialTab.style.display = 'inline-flex';
     if (adminTab) adminTab.style.display = 'inline-flex';
+    if (agendaTab) agendaTab.textContent = 'Agendar Cita';
+    if (citasTab) citasTab.textContent = 'Mis Citas';
   }
 }
 
 async function loginWithCredentials(email, password) {
   try {
+    localStorage.removeItem(TOKEN_KEY);
+    updateJwtPreview();
+
     const result = await apiRequest('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password })
@@ -202,17 +353,39 @@ async function loginWithCredentials(email, password) {
 
     localStorage.setItem(TOKEN_KEY, result.token);
     currentUser = result.user;
+    updateJwtPreview(result.token);
+    updateRoleTheme(currentUser.role);
+
+    const roleLabels = {
+      patient: 'Paciente',
+      dentist: 'Odontólogo',
+      admin: 'Administrador'
+    };
 
     if (statusBadge) {
-      statusBadge.innerHTML = '<span class="status-dot"></span> Sesión activa';
+      statusBadge.innerHTML = `<span class="status-dot"></span> Sesión activa · ${roleLabels[currentUser.role] || 'Usuario'}`;
     }
 
+    if (logoutBtn) logoutBtn.classList.remove('hidden');
+
+    const doctorSelect = document.querySelector('#agenda-panel select');
+    if (currentUser.role === 'dentist' && doctorSelect) {
+      const availableDoctors = Array.from(doctorSelect.options).map((option) => option.value);
+      if (availableDoctors.includes(currentUser.name)) {
+        doctorSelect.value = currentUser.name;
+      } else {
+        doctorSelect.selectedIndex = 0;
+      }
+    }
+
+    await cargarQueue();
     loginCard.style.display = 'none';
     workspace.classList.add('active');
     applyRolePermissions(currentUser.role);
     await cargarDisponibilidad();
     await cargarCitas();
-    if (currentUser.role === 'admin') {
+    await cargarHistorial();
+    if (currentUser.role === 'admin' || currentUser.role === 'dentist') {
       await cargarAdminCitas();
     }
 
@@ -222,19 +395,6 @@ async function loginWithCredentials(email, password) {
     throw error;
   }
 }
-
-quickButtons.forEach((button) => {
-  button.addEventListener('click', () => {
-    const role = button.dataset.role;
-    const email = role === 'dentist' ? 'admin@apexflow.com' : 'paciente@apexflow.com';
-    const password = role === 'dentist' ? 'admin123' : 'paciente123';
-
-    document.getElementById('email').value = email;
-    document.getElementById('password').value = password;
-
-    loginWithCredentials(email, password);
-  });
-});
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -246,6 +406,7 @@ loginForm.addEventListener('submit', async (event) => {
     return;
   }
 
+  localStorage.removeItem(TOKEN_KEY);
   await loginWithCredentials(email, password);
 });
 
@@ -292,6 +453,20 @@ async function reservarCita() {
       body: JSON.stringify(payload)
     });
 
+    const horarioSelect = document.querySelectorAll('#agenda-panel select')[2];
+    if (horarioSelect && payload.hora) {
+      const optionToRemove = Array.from(horarioSelect.options).find((option) => option.value === payload.hora);
+      if (optionToRemove) {
+        horarioSelect.removeChild(optionToRemove);
+      }
+    }
+
+    if (result.queue && result.queue.length) {
+      renderQueue(result.queue);
+    } else {
+      await cargarQueue();
+    }
+
     showAlert('success', result.message || 'Reserva confirmada correctamente.');
     await cargarDisponibilidad();
     await cargarCitas();
@@ -318,6 +493,10 @@ tabButtons.forEach((button) => {
 
     if (button.dataset.tab === 'citas') {
       cargarCitas();
+    }
+
+    if (button.dataset.tab === 'historial') {
+      cargarHistorial();
     }
 
     if (button.dataset.tab === 'admin') {
@@ -368,13 +547,85 @@ if (refreshAdminBtn) {
   refreshAdminBtn.addEventListener('click', cargarAdminCitas);
 }
 
+async function guardarNotaClinica() {
+  const paciente = document.getElementById('historialPaciente')?.value?.trim();
+  const diagnostico = document.getElementById('historialDiagnostico')?.value?.trim();
+  const observaciones = document.getElementById('historialObservaciones')?.value?.trim();
+
+  if (!paciente || !diagnostico || !observaciones) {
+    showAlert('error', 'Completa paciente, diagnóstico y observaciones.');
+    return;
+  }
+
+  try {
+    const response = await apiRequest('/api/historial', {
+      method: 'POST',
+      body: JSON.stringify({ paciente, diagnostico, observaciones })
+    });
+    showAlert('success', response.message || 'Nota clínica registrada correctamente.');
+    await cargarHistorial();
+  } catch (error) {
+    showAlert('error', error.message);
+  }
+}
+
+const guardarDiagnosticoBtn = document.getElementById('guardarDiagnosticoBtn');
+if (guardarDiagnosticoBtn) {
+  guardarDiagnosticoBtn.addEventListener('click', guardarNotaClinica);
+}
+
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', () => {
+    showLoginScreen();
+    showAlert('success', 'Sesión cerrada correctamente.');
+  });
+}
+
 bindAgendaEvents();
 
-if (getToken()) {
-  loginCard.style.display = 'none';
-  workspace.classList.add('active');
-  currentUser = { role: 'patient' };
-  applyRolePermissions('patient');
-  cargarDisponibilidad();
-  cargarCitas();
+async function restoreSessionFromToken() {
+  const savedToken = getToken();
+
+  if (!savedToken) {
+    updateJwtPreview();
+    updateRoleTheme('guest');
+    if (loginCard) loginCard.style.display = 'grid';
+    if (workspace) workspace.classList.remove('active');
+    if (logoutBtn) logoutBtn.classList.add('hidden');
+    if (statusBadge) {
+      statusBadge.innerHTML = '<span class="status-dot"></span> Inicia sesión';
+    }
+    return;
+  }
+
+  try {
+    const response = await apiRequest('/api/users/me');
+    currentUser = response.user;
+    updateJwtPreview(savedToken);
+    updateRoleTheme(currentUser.role);
+    if (statusBadge) {
+      const roleLabels = {
+        patient: 'Paciente',
+        dentist: 'Odontólogo',
+        admin: 'Administrador'
+      };
+      statusBadge.innerHTML = `<span class="status-dot"></span> Sesión activa · ${roleLabels[currentUser.role] || 'Usuario'}`;
+    }
+    if (logoutBtn) logoutBtn.classList.remove('hidden');
+    loginCard.style.display = 'none';
+    workspace.classList.add('active');
+    applyRolePermissions(currentUser.role);
+    await cargarDisponibilidad();
+    await cargarCitas();
+    await cargarHistorial();
+    if (currentUser.role === 'admin' || currentUser.role === 'dentist') {
+      await cargarAdminCitas();
+    }
+  } catch (error) {
+    clearSessionState();
+    showLoginScreen();
+    showAlert('error', 'La sesión anterior expiró. Inicia sesión nuevamente.');
+  }
 }
+
+restoreSessionFromToken();

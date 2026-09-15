@@ -25,6 +25,31 @@ const horariosDisponibles = ['09:30', '10:15', '11:00', '12:45'];
 let users = [];
 let citas = [];
 let projects = [];
+let messageQueue = [];
+
+function enqueueMessage({ type, title, message, recipient, status = 'queued' }) {
+  const event = {
+    id: `msg_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    type,
+    title,
+    message,
+    recipient,
+    status,
+    createdAt: new Date().toISOString()
+  };
+
+  messageQueue.unshift(event);
+  return event;
+}
+
+function simulateQueueDelivery() {
+  const pending = messageQueue.filter((item) => item.status === 'queued');
+  pending.forEach((item) => {
+    item.status = 'sent';
+    item.sentAt = new Date().toISOString();
+  });
+  return pending;
+}
 
 async function reloadData() {
   await dbReady;
@@ -117,6 +142,10 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
 app.get('/health', async (req, res) => {
   await dbReady;
   res.json({
@@ -187,12 +216,90 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/users/me', verificarJWT, async (req, res) => {
   await dbReady;
+  await reloadData();
   const user = users.find((item) => item.id === req.user.id);
   if (!user) {
     return res.status(404).json({ ok: false, message: 'Usuario no encontrado.' });
   }
 
   return res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+});
+
+app.get('/api/queue', verificarJWT, async (req, res) => {
+  await dbReady;
+  simulateQueueDelivery();
+  return res.json({ ok: true, queue: messageQueue.slice(0, 6), total: messageQueue.length });
+});
+
+app.get('/api/historial', verificarJWT, async (req, res) => {
+  await dbReady;
+  const { paciente } = req.query;
+  const rows = await all('SELECT * FROM historial ORDER BY created_at DESC');
+
+  let notes = rows;
+  if (req.user.role === 'patient') {
+    notes = rows.filter((note) => note.paciente === req.user.name);
+  }
+
+  if (paciente) {
+    notes = notes.filter((note) => note.paciente.toLowerCase().includes(String(paciente).toLowerCase()));
+  }
+
+  if (req.user.role === 'dentist' || req.user.role === 'admin') {
+    notes = rows;
+    if (paciente) {
+      notes = notes.filter((note) => note.paciente.toLowerCase().includes(String(paciente).toLowerCase()));
+    }
+  }
+
+  return res.json({
+    ok: true,
+    total: notes.length,
+    notes: notes.map((note) => ({
+      id: String(note.id),
+      paciente: note.paciente,
+      odontologo: note.odontologo,
+      diagnostico: note.diagnostico,
+      observaciones: note.observaciones,
+      createdAt: note.created_at
+    }))
+  });
+});
+
+app.post('/api/historial', verificarJWT, async (req, res) => {
+  await dbReady;
+  const { paciente, diagnostico, observaciones } = req.body;
+
+  if (!paciente || !diagnostico || !observaciones) {
+    return res.status(400).json({ ok: false, message: 'Paciente, diagnóstico y observaciones son obligatorios.' });
+  }
+
+  if (req.user.role !== 'dentist' && req.user.role !== 'admin') {
+    return res.status(403).json({ ok: false, message: 'Solo el odontólogo o administrador puede registrar notas clínicas.' });
+  }
+
+  const doctorName = req.user.name || 'Odontólogo';
+  const patientRecord = users.find((user) => user.name === paciente || user.email === paciente);
+  const result = await run(
+    'INSERT INTO historial (paciente, paciente_id, odontologo, odontologo_id, diagnostico, observaciones) VALUES (?, ?, ?, ?, ?, ?)',
+    [paciente, patientRecord ? patientRecord.id : null, doctorName, req.user.id, diagnostico, observaciones]
+  );
+
+  const note = {
+    id: String(result.id),
+    paciente,
+    pacienteId: patientRecord ? patientRecord.id : null,
+    odontologo: doctorName,
+    diagnostico,
+    observaciones,
+    createdAt: new Date().toISOString()
+  };
+
+  return res.status(201).json({
+    ok: true,
+    message: 'Nota clínica registrada correctamente.',
+    note
+  });
 });
 
 app.get('/api/projects', verificarJWT, async (req, res) => {
@@ -286,6 +393,7 @@ app.delete('/api/projects/:projectId/tasks/:taskId', verificarJWT, async (req, r
 
 app.get('/api/dashboard', verificarJWT, async (req, res) => {
   await dbReady;
+  await reloadData();
   const totalProjects = projects.length;
   const totalTasks = projects.reduce((sum, project) => sum + project.tasks.length, 0);
   const completedTasks = projects.reduce((sum, project) => sum + project.tasks.filter((task) => task.status === 'done').length, 0);
@@ -318,25 +426,37 @@ app.get('/api/disponibilidad', verificarJWT, async (req, res) => {
 
 app.get('/api/citas', verificarJWT, async (req, res) => {
   await dbReady;
+  await reloadData();
   const usuario = users.find((item) => item.id === req.user.id);
   if (!usuario) {
     return res.status(404).json({ ok: false, message: 'Usuario no encontrado.' });
   }
 
-  await reloadData();
-  const lista = usuario.role === 'patient' ? citas.filter((cita) => cita.pacienteId === usuario.id) : citas;
+  let lista = citas;
+  if (usuario.role === 'patient') {
+    lista = citas.filter((cita) => cita.pacienteId === usuario.id);
+  }
+  if (usuario.role === 'dentist') {
+    lista = citas.filter((cita) => cita.odontologo === usuario.name);
+  }
+
   return res.json({ ok: true, total: lista.length, citas: lista });
 });
 
 app.get('/api/admin/citas', verificarJWT, async (req, res) => {
   await dbReady;
+  await reloadData();
   const usuario = users.find((item) => item.id === req.user.id);
-  if (!usuario || usuario.role !== 'admin') {
+  if (!usuario || (usuario.role !== 'admin' && usuario.role !== 'dentist')) {
     return res.status(403).json({ ok: false, message: 'Acceso no autorizado.' });
   }
 
-  await reloadData();
-  return res.json({ ok: true, total: citas.length, citas: citas.map(parseCita) });
+  let lista = citas;
+  if (usuario.role === 'dentist') {
+    lista = citas.filter((cita) => cita.odontologo === usuario.name);
+  }
+
+  return res.json({ ok: true, total: lista.length, citas: lista.map(parseCita) });
 });
 
 app.post('/api/citas', verificarJWT, async (req, res) => {
@@ -374,8 +494,22 @@ app.post('/api/citas', verificarJWT, async (req, res) => {
     estado: 'Confirmada'
   };
 
+  enqueueMessage({
+    type: 'email',
+    title: 'Correo automático enviado',
+    message: `Cita confirmada para ${usuario.name} con ${odontologo} el ${fecha} a las ${hora}.`,
+    recipient: usuario.email,
+    status: 'queued'
+  });
+
+  simulateQueueDelivery();
   citas = await all('SELECT * FROM citas ORDER BY fecha ASC, hora ASC');
-  return res.status(201).json({ ok: true, message: 'Reserva confirmada correctamente.', cita: nuevaCita });
+  return res.status(201).json({
+    ok: true,
+    message: 'Reserva confirmada correctamente. El bloque de horario desaparece automáticamente para evitar reservas dobles.',
+    cita: nuevaCita,
+    queue: messageQueue.slice(0, 3)
+  });
 });
 
 app.patch('/api/citas/:id', verificarJWT, async (req, res) => {

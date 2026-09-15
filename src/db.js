@@ -38,29 +38,82 @@ async function all(sql, params = []) {
 }
 
 async function ensureSeedUsers() {
-  const userCount = await get('SELECT COUNT(*)::int AS total FROM users');
+  const totals = await all('SELECT role, COUNT(*)::int AS total FROM users GROUP BY role');
+  const byRole = Object.fromEntries(totals.map((row) => [row.role, Number(row.total)]));
 
-  if (userCount.total > 0) {
+  const defaultUsers = [
+    ['Admin ApexFlow', 'admin1@apexflow.com', 'admin123', 'admin'],
+    ['Admin Operaciones', 'admin2@apexflow.com', 'admin456', 'admin'],
+    ['Admin Financiero', 'admin3@apexflow.com', 'admin789', 'admin'],
+    ['Admin Soporte', 'admin4@apexflow.com', 'admin101', 'admin'],
+    ['Admin Calidad', 'admin5@apexflow.com', 'admin202', 'admin'],
+    ['María López', 'paciente1@apexflow.com', 'paciente123', 'patient'],
+    ['Carlos Ruiz', 'paciente2@apexflow.com', 'paciente456', 'patient'],
+    ['Lucía García', 'paciente3@apexflow.com', 'paciente789', 'patient'],
+    ['Mateo Silva', 'paciente4@apexflow.com', 'paciente101', 'patient'],
+    ['Sofía Díaz', 'paciente5@apexflow.com', 'paciente202', 'patient'],
+    ['Dra. Ana Gómez', 'dentista1@apexflow.com', 'dentista123', 'dentist'],
+    ['Dr. Javier Torres', 'dentista2@apexflow.com', 'dentista456', 'dentist'],
+    ['Dra. Sofía Ramírez', 'dentista3@apexflow.com', 'dentista789', 'dentist'],
+    ['Dr. Daniel Ruiz', 'dentista4@apexflow.com', 'dentista101', 'dentist'],
+    ['Dra. Valeria León', 'dentista5@apexflow.com', 'dentista202', 'dentist']
+  ];
+
+  const existingEmails = new Set((await all('SELECT email FROM users')).map((row) => row.email));
+
+  for (const [name, email, password, role] of defaultUsers) {
+    if (!existingEmails.has(email)) {
+      await db.query(
+        `INSERT INTO users (name, email, password, role)
+         VALUES ($1, $2, $3, $4)`,
+        [name, email, password, role]
+      );
+      existingEmails.add(email);
+    }
+  }
+
+  const finalTotals = await all('SELECT role, COUNT(*)::int AS total FROM users GROUP BY role');
+  const finalByRole = Object.fromEntries(finalTotals.map((row) => [row.role, Number(row.total)]));
+
+  for (const role of ['admin', 'patient', 'dentist']) {
+    if (!finalByRole[role] || finalByRole[role] < 5) {
+      console.log(`Role ${role} tiene menos de 5 usuarios; se mantiene la semilla base.`);
+    }
+  }
+}
+
+async function ensureSeedAppointments() {
+  const count = await get('SELECT COUNT(*)::int AS total FROM citas');
+  if (count && count.total >= 5) {
     return;
   }
 
-  const defaultUsers = [
-    ['Administrador ApexFlow', 'admin@apexflow.com', 'admin123', 'admin'],
-    ['Administrador de Operaciones', 'admin2@apexflow.com', 'admin456', 'admin'],
-    ['María López', 'paciente@apexflow.com', 'paciente123', 'patient'],
-    ['Carlos Ruiz', 'paciente2@apexflow.com', 'paciente456', 'patient'],
-    ['Lucía García', 'paciente3@apexflow.com', 'paciente789', 'patient'],
-    ['Dra. Ana Gómez', 'dentista@apexflow.com', 'dentista123', 'dentist'],
-    ['Dr. Javier Torres', 'dentista2@apexflow.com', 'dentista456', 'dentist'],
-    ['Dra. Sofía Ramírez', 'dentista3@apexflow.com', 'dentista789', 'dentist']
+  const patients = await all("SELECT id, name, email FROM users WHERE role = 'patient' ORDER BY id LIMIT 5");
+  const dentists = await all("SELECT id, name, email FROM users WHERE role = 'dentist' ORDER BY id LIMIT 5");
+
+  const sampleAppointments = [
+    { patient: patients[0], doctor: dentists[0], especialidad: 'Limpieza', fecha: '2026-09-20', hora: '09:00', motivo: 'Control preventivo', estado: 'Confirmada' },
+    { patient: patients[1], doctor: dentists[1], especialidad: 'Endodoncia', fecha: '2026-09-20', hora: '10:15', motivo: 'Dolor persistente', estado: 'Confirmada' },
+    { patient: patients[2], doctor: dentists[2], especialidad: 'Ortodoncia', fecha: '2026-09-21', hora: '11:00', motivo: 'Seguimiento', estado: 'Pendiente' },
+    { patient: patients[3], doctor: dentists[3], especialidad: 'Implantología', fecha: '2026-09-21', hora: '12:30', motivo: 'Valoración inicial', estado: 'Confirmada' },
+    { patient: patients[4], doctor: dentists[4], especialidad: 'Rehabilitación', fecha: '2026-09-22', hora: '14:00', motivo: 'Revisión de restauraciones', estado: 'Confirmada' }
   ];
 
-  for (const [name, email, password, role] of defaultUsers) {
+  for (const item of sampleAppointments) {
     await db.query(
-      `INSERT INTO users (name, email, password, role)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (email) DO NOTHING`,
-      [name, email, password, role]
+      `INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT DO NOTHING`,
+      [
+        item.patient.id,
+        item.patient.name,
+        item.doctor.name,
+        item.especialidad,
+        item.fecha,
+        item.hora,
+        item.motivo,
+        item.estado
+      ]
     );
   }
 }
@@ -104,15 +157,7 @@ async function initDatabase() {
   `);
 
   await ensureSeedUsers();
-
-  const citaCount = await get('SELECT COUNT(*)::int AS total FROM citas');
-  if (citaCount.total === 0) {
-    await run(
-      `INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [2, 'María López', 'Dra. Ana Gómez', 'Endodoncia', '2026-09-12', '09:30', 'Revisión general', 'Confirmada']
-    );
-  }
+  await ensureSeedAppointments();
 }
 
 async function findUserByEmail(email) {

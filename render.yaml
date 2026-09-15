@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: apexflow-demo
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        value: apexflow-secret-demo
+      - key: JWT_EXPIRES_IN
+        value: 8h

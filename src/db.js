@@ -37,6 +37,34 @@ async function all(sql, params = []) {
   return result.rows;
 }
 
+async function ensureSeedUsers() {
+  const userCount = await get('SELECT COUNT(*)::int AS total FROM users');
+
+  if (userCount.total > 0) {
+    return;
+  }
+
+  const defaultUsers = [
+    ['Administrador ApexFlow', 'admin@apexflow.com', 'admin123', 'admin'],
+    ['Administrador de Operaciones', 'admin2@apexflow.com', 'admin456', 'admin'],
+    ['María López', 'paciente@apexflow.com', 'paciente123', 'patient'],
+    ['Carlos Ruiz', 'paciente2@apexflow.com', 'paciente456', 'patient'],
+    ['Lucía García', 'paciente3@apexflow.com', 'paciente789', 'patient'],
+    ['Dra. Ana Gómez', 'dentista@apexflow.com', 'dentista123', 'dentist'],
+    ['Dr. Javier Torres', 'dentista2@apexflow.com', 'dentista456', 'dentist'],
+    ['Dra. Sofía Ramírez', 'dentista3@apexflow.com', 'dentista789', 'dentist']
+  ];
+
+  for (const [name, email, password, role] of defaultUsers) {
+    await db.query(
+      `INSERT INTO users (name, email, password, role)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO NOTHING`,
+      [name, email, password, role]
+    );
+  }
+}
+
 async function initDatabase() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -75,25 +103,7 @@ async function initDatabase() {
     )
   `);
 
-  const defaultUsers = [
-    ['Administrador ApexFlow', 'admin@apexflow.com', 'admin123', 'admin'],
-    ['Administrador de Operaciones', 'admin2@apexflow.com', 'admin456', 'admin'],
-    ['María López', 'paciente@apexflow.com', 'paciente123', 'patient'],
-    ['Carlos Ruiz', 'paciente2@apexflow.com', 'paciente456', 'patient'],
-    ['Lucía García', 'paciente3@apexflow.com', 'paciente789', 'patient'],
-    ['Dra. Ana Gómez', 'dentista@apexflow.com', 'dentista123', 'dentist'],
-    ['Dr. Javier Torres', 'dentista2@apexflow.com', 'dentista456', 'dentist'],
-    ['Dra. Sofía Ramírez', 'dentista3@apexflow.com', 'dentista789', 'dentist']
-  ];
-
-  for (const [name, email, password, role] of defaultUsers) {
-    await db.query(
-      `INSERT INTO users (name, email, password, role)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (email) DO NOTHING`,
-      [name, email, password, role]
-    );
-  }
+  await ensureSeedUsers();
 
   const citaCount = await get('SELECT COUNT(*)::int AS total FROM citas');
   if (citaCount.total === 0) {
@@ -105,4 +115,8 @@ async function initDatabase() {
   }
 }
 
-module.exports = { db, initDatabase, run, get, all };
+async function findUserByEmail(email) {
+  return get('SELECT * FROM users WHERE email = $1', [email]);
+}
+
+module.exports = { db, initDatabase, run, get, all, findUserByEmail };

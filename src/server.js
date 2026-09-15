@@ -3,7 +3,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const dotenv = require('dotenv');
-const { initDatabase, run, get, all } = require('./db');
+const { initDatabase, run, get, all, findUserByEmail } = require('./db');
 
 dotenv.config();
 
@@ -134,8 +134,8 @@ function verificarJWT(req, res, next) {
   }
 }
 
-function getCurrentUser(email) {
-  return users.find((user) => user.email === email);
+async function getCurrentUser(email) {
+  return findUserByEmail(email);
 }
 
 app.get('/', (req, res) => {
@@ -199,7 +199,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   await reloadData();
-  const user = getCurrentUser(email);
+  const user = await getCurrentUser(email);
   if (!user || user.password !== password) {
     return res.status(401).json({ ok: false, message: 'Credenciales inválidas.' });
   }

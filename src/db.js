@@ -1,50 +1,46 @@
-const sqlite3 = require('sqlite3').verbose();
-const fs = require('fs');
-const path = require('path');
+const { Pool } = require('pg');
 
-const dbDir = path.join(__dirname, '..', 'data');
-fs.mkdirSync(dbDir, { recursive: true });
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/apexflow';
 
-const dbPath = path.join(dbDir, 'apexflow.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error al abrir SQLite:', err.message);
-    return;
-  }
-  console.log('Conectado a SQLite:', dbPath);
+const db = new Pool({
+  connectionString,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) return reject(err);
-      resolve({ id: this.lastID, changes: this.changes });
-    });
-  });
+async function run(sql, params = []) {
+  const query = sql.trim();
+  const isInsert = /^INSERT\b/i.test(query);
+  const finalQuery = isInsert && !/\bRETURNING\b/i.test(query) ? `${query} RETURNING id` : query;
+
+  const result = await db.query(finalQuery, params);
+
+  if (isInsert) {
+    return {
+      id: result.rows[0] ? result.rows[0].id : null,
+      changes: result.rowCount || 0
+    };
+  }
+
+  return {
+    id: null,
+    changes: result.rowCount || 0
+  };
 }
 
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
-  });
+async function get(sql, params = []) {
+  const result = await db.query(sql, params);
+  return result.rows[0] || null;
 }
 
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
+async function all(sql, params = []) {
+  const result = await db.query(sql, params);
+  return result.rows;
 }
 
 async function initDatabase() {
-  await run(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
@@ -52,9 +48,9 @@ async function initDatabase() {
     )
   `);
 
-  await run(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS citas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       paciente_id INTEGER NOT NULL,
       paciente_nombre TEXT NOT NULL,
       odontologo TEXT NOT NULL,
@@ -66,16 +62,16 @@ async function initDatabase() {
     )
   `);
 
-  await run(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS historial (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       paciente TEXT NOT NULL,
       paciente_id INTEGER,
       odontologo TEXT NOT NULL,
       odontologo_id INTEGER NOT NULL,
       diagnostico TEXT NOT NULL,
       observaciones TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )
   `);
 
@@ -91,20 +87,19 @@ async function initDatabase() {
   ];
 
   for (const [name, email, password, role] of defaultUsers) {
-    const user = await get('SELECT id FROM users WHERE email = ?', [email]);
-    if (!user) {
-      await run(
-        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-        [name, email, password, role]
-      );
-    }
+    await db.query(
+      `INSERT INTO users (name, email, password, role)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO NOTHING`,
+      [name, email, password, role]
+    );
   }
 
-  const citaCount = await get('SELECT COUNT(*) AS total FROM citas');
+  const citaCount = await get('SELECT COUNT(*)::int AS total FROM citas');
   if (citaCount.total === 0) {
-    const dentista = await get('SELECT id FROM users WHERE email = ?', ['dentista@apexflow.com']);
     await run(
-      'INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO citas (paciente_id, paciente_nombre, odontologo, especialidad, fecha, hora, motivo, estado)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [2, 'María López', 'Dra. Ana Gómez', 'Endodoncia', '2026-09-12', '09:30', 'Revisión general', 'Confirmada']
     );
   }
